@@ -190,22 +190,22 @@ func (kr *NamedKeys) LoadPrivKeys(fileName string, silent bool) error {
 			}
 
 			return func(int) int {
-				haddr, err := hex.DecodeString(string(items[1]))
+				haddr, err := hex.DecodeString(items[1])
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "failed to decode address %s: %v\n",
-						string(items[1]), err)
+						items[1], err)
 					return 0
 				}
 				addr := common.BytesToAddress(haddr)
-				key, err := crypto.HexToECDSA(string(items[2]))
+				key, err := crypto.HexToECDSA(items[2])
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "failed to decode private key %s: %v\n",
-						string(items[1]), err)
+						items[1], err)
 					return 0
 				}
 
 				addr2 := crypto.PubkeyToAddress(key.PublicKey)
-				if bytes.Compare(addr[:], addr2[:]) != 0 {
+				if !bytes.Equal(addr[:], addr2[:]) {
 					fmt.Fprintf(os.Stderr, "NoT GOOD\n")
 					return 0
 				}

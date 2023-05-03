@@ -32,7 +32,7 @@ var (
 
 func init() {
 	count := 1001
-	nonceLocks = make([]*sync.Mutex, count, count)
+	nonceLocks = make([]*sync.Mutex, count)
 	for i := 0; i < count; i++ {
 		nonceLocks[i] = &sync.Mutex{}
 	}
