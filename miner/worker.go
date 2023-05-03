@@ -78,6 +78,11 @@ const (
 	staleThreshold = 7
 )
 
+var (
+	errBlockInterruptedByNewHead  = errors.New("new head arrived while building block")
+	errBlockInterruptedByRecommit = errors.New("recommit interrupt while building block")
+)
+
 // environment is the worker's current environment and holds all
 // information of the sealing block generation.
 type environment struct {
@@ -173,8 +178,8 @@ type newWorkReq struct {
 // getWorkReq represents a request for getting a new sealing work with provided parameters.
 type getWorkReq struct {
 	params *generateParams
-	err    error
-	result chan *types.Block
+	result chan *types.Block // non-blocking channel
+	err    chan error
 }
 
 // intervalAdjust represents a resubmitting interval adjustment.
@@ -528,11 +533,6 @@ func (w *worker) newWorkLoopEx(recommit time.Duration) {
 	timer := time.NewTimer(10 * time.Millisecond)
 	defer timer.Stop()
 
-	// to be notified when we become the leader / miner
-	leader := make(chan struct{}, 1)
-	wemixminer.SubscribeToLeadership(&leader)
-	defer wemixminer.UnsubscribeToLeadership()
-
 	// commitSimple just starts a new commitNewWork
 	commitSimple := func() {
 		if atomic.CompareAndSwapInt32(&busyMining, 0, 1) {
@@ -560,18 +560,12 @@ func (w *worker) newWorkLoopEx(recommit time.Duration) {
 			commitSimple()
 
 		case head := <-w.chainHeadCh:
-			// if leader & miner, may be waiting to sync with the previous miner
-			wemixminer.FeedBlockImported(int64(head.Block.NumberU64()), head.Block.Hash())
 			clearPending(head.Block.NumberU64())
-			commitSimple()
-
-		case <-leader:
-			// got the leadership
 			commitSimple()
 
 		case <-timer.C:
 			commitSimple()
-			timer.Reset(10 * time.Millisecond)
+			timer.Reset(1 * time.Second)
 
 		case <-w.resubmitIntervalCh:
 		case <-w.resubmitAdjustCh:
@@ -611,12 +605,12 @@ func (w *worker) mainLoop() {
 		case req := <-w.getWorkCh:
 			block, err := w.generateWork(req.params)
 			if err != nil {
-				req.err = err
+				req.err <- err
 				req.result <- nil
 			} else {
+				req.err <- nil
 				req.result <- block
 			}
-
 		case ev := <-w.chainSideCh:
 			// Short circuit for duplicate side blocks
 			if _, exist := w.localUncles[ev.Block.Hash()]; exist {
@@ -924,7 +918,7 @@ func (w *worker) commitTransaction(env *environment, tx *types.Transaction) ([]*
 	return receipt.Logs, nil
 }
 
-func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByPriceAndNonce, interrupt *int32, tstart *time.Time, committedTxs map[common.Hash]*types.Transaction) bool {
+func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByPriceAndNonce, interrupt *int32, tstart *time.Time, committedTxs map[common.Hash]*types.Transaction) error {
 	gasLimit := env.header.GasLimit
 	if env.gasPool == nil {
 		env.gasPool = new(core.GasPool).AddGas(gasLimit)
@@ -949,8 +943,9 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 					ratio: ratio,
 					inc:   true,
 				}
+				return errBlockInterruptedByRecommit
 			}
-			return atomic.LoadInt32(interrupt) == commitInterruptNewHead
+			return errBlockInterruptedByNewHead
 		}
 		// If we don't have enough gas for any further transactions then we're done
 		if env.gasPool.Gas() < params.TxGas {
@@ -1046,10 +1041,10 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 	if interrupt != nil {
 		w.resubmitAdjustCh <- &intervalAdjust{inc: false}
 	}
-	return false
+	return nil
 }
 
-func (w *worker) commitTransactionsSimple(env *environment, txs *TxOrderer, interrupt *int32, tstart *time.Time) bool {
+func (w *worker) commitTransactionsSimple(env *environment, txs *TxOrderer, interrupt *int32, tstart *time.Time) error {
 	gasLimit := env.header.GasLimit
 	if env.gasPool == nil {
 		env.gasPool = new(core.GasPool).AddGas(gasLimit)
@@ -1077,8 +1072,9 @@ func (w *worker) commitTransactionsSimple(env *environment, txs *TxOrderer, inte
 					ratio: ratio,
 					inc:   true,
 				}
+				return errBlockInterruptedByRecommit
 			}
-			return atomic.LoadInt32(interrupt) == commitInterruptNewHead
+			return errBlockInterruptedByNewHead
 		}
 		// If we don't have enough gas for any further transactions then we're done
 		if env.gasPool.Gas() < params.TxGas {
@@ -1169,7 +1165,7 @@ func (w *worker) commitTransactionsSimple(env *environment, txs *TxOrderer, inte
 	if interrupt != nil {
 		w.resubmitAdjustCh <- &intervalAdjust{inc: false}
 	}
-	return false
+	return nil
 }
 
 // collects ancestors' block times for possible throttling
@@ -1203,11 +1199,12 @@ func (w *worker) ancestorTimes(num *big.Int) []int64 {
 
 // returns throttle delay if necessary in seconds & seconds from the parent
 // blocks  seconds  seconds per
-//     10        1  0.1
-//     50       10  0.2
-//    100       50  0.5
-//    500      500  1
-//   1000     2000  2
+//
+//	  10        1  0.1
+//	  50       10  0.2
+//	 100       50  0.5
+//	 500      500  1
+//	1000     2000  2
 func (w *worker) throttleMining(ts []int64) (int64, int64) {
 	t := time.Now().Unix()
 	dt, pt := int64(0), t-ts[0]
@@ -1229,24 +1226,15 @@ func (w *worker) throttleMining(ts []int64) (int64, int64) {
 }
 
 func (w *worker) commitTransactionsEx(env *environment, interrupt *int32, tstart time.Time) bool {
-	interval := 10 * time.Millisecond
 
-	// committed transactions in this round
+	// committed transactions
 	committedTxs := map[common.Hash]*types.Transaction{}
-	round := 0
-	for {
-		round++
 
-		// Fill the block with all available pending transactions.
-		pending := w.eth.TxPool().Pending(true)
-		// Short circuit if there is no available pending transactions
-		if len(pending) == 0 {
-			if time.Until(*env.till) <= 0 {
-				break
-			}
-			time.Sleep(interval)
-			continue
-		}
+	// Fill the block with all available pending transactions.
+	pending := w.eth.TxPool().Pending(true)
+
+	// Short circuit if there is no available pending transactions
+	if len(pending) != 0 {
 
 		// using new simple round-robin ordering instead of old one.
 		if params.PrefetchCount == 0 {
@@ -1268,23 +1256,21 @@ func (w *worker) commitTransactionsEx(env *environment, interrupt *int32, tstart
 			}
 
 			txs := types.NewTransactionsByPriceAndNonce(env.signer, pending, env.header.BaseFee)
-			if w.commitTransactions(env, txs, interrupt, &tstart, committedTxs) {
+			if err := w.commitTransactions(env, txs, interrupt, &tstart, committedTxs); err != nil {
 				return true
 			}
 		} else {
 			txs := NewTxOrderer(pending, committedTxs)
-			if w.commitTransactionsSimple(env, txs, interrupt, &tstart) {
+			if err := w.commitTransactionsSimple(env, txs, interrupt, &tstart); err != nil {
 				return true
 			}
 		}
 
-		if time.Until(*env.till) <= 0 {
-			break
-		}
-		time.Sleep(interval)
-		round++
 	}
-	log.Debug("Block", "number", env.header.Number.Int64(), "elapsed", common.PrettyDuration(time.Since(tstart)), "txs", len(committedTxs), "round", round)
+
+	time.Sleep(time.Until(*env.till))
+
+	log.Debug("Block", "number", env.header.Number.Int64(), "elapsed", common.PrettyDuration(time.Since(tstart)), "txs", len(committedTxs))
 
 	return false
 }
@@ -1302,6 +1288,7 @@ type generateParams struct {
 	random     common.Hash    // The randomness generated by beacon chain, empty before the merge
 	noUncle    bool           // Flag whether the uncle block inclusion is allowed
 	noExtra    bool           // Flag whether the extra field assignment is allowed
+	noTxs      bool           // Flag whether an empty block without any transaction is expected
 }
 
 // prepareWork constructs the sealing task according to the given parameters,
@@ -1321,7 +1308,7 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 	if parent == nil {
 		return nil, fmt.Errorf("missing parent")
 	}
-	blockInterval, _, blockGasLimit, baseFeeMaxChangeRate, gasTargetPercentage, err := wemixminer.GetBlockBuildParameters(parent.Number())
+	blockInterval, _, blockGasLimit, baseFeeMaxChangeRate, gasTargetPercentage, _ := wemixminer.GetBlockBuildParameters(parent.Number())
 	// Sanity check the timestamp correctness, recap the timestamp
 	// to parent+1 if the mutation is allowed.
 	timestamp := genParams.timestamp
@@ -1337,7 +1324,7 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 
 	// wemix
 	if !wemixminer.IsPoW() {
-		timestamp, till = w.timeIt(int64(blockInterval))
+		timestamp, till = w.timeIt(blockInterval)
 	}
 	header := &types.Header{
 		ParentHash: parent.Hash(),
@@ -1413,7 +1400,7 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 // fillTransactions retrieves the pending transactions from the txpool and fills them
 // into the given sealing block. The transaction selection and ordering strategy can
 // be customized with the plugin in the future.
-func (w *worker) fillTransactions(interrupt *int32, env *environment) {
+func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
 	// Split the pending transactions into locals and remotes
 	// Fill the block with all available pending transactions.
 	pending := w.eth.TxPool().Pending(true)
@@ -1426,16 +1413,19 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) {
 	}
 	if len(localTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, localTxs, env.header.BaseFee)
-		if w.commitTransactions(env, txs, interrupt, nil, nil) {
-			return
+
+		if err := w.commitTransactions(env, txs, interrupt, nil, nil); err != nil {
+			return err
 		}
 	}
 	if len(remoteTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, remoteTxs, env.header.BaseFee)
-		if w.commitTransactions(env, txs, interrupt, nil, nil) {
-			return
+
+		if err := w.commitTransactions(env, txs, interrupt, nil, nil); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 // refreshPending reinitialize pending state
@@ -1496,7 +1486,9 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 	}
 	defer work.discard()
 
-	w.fillTransactions(nil, work)
+	if !params.noTxs {
+		w.fillTransactions(nil, work)
+	}
 	return w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, work.txs, work.unclelist(), work.receipts)
 }
 
@@ -1604,9 +1596,19 @@ func (w *worker) commitWork(interrupt *int32, noempty bool, timestamp int64) {
 	} else {
 		return
 	}
-	if !wemixminer.IsPoW() && !wemixminer.IsMiner() {
-		w.refreshPending(true)
-		return
+	if !wemixminer.IsPoW() {
+		parent := w.chain.CurrentBlock()
+		height := new(big.Int).Add(parent.Number(), common.Big1)
+		ok, err := wemixminer.AcquireMiningToken(height, parent.Hash())
+		if ok {
+			log.Debug("Mining Token, successful", "height", height, "parent-hash", parent.Hash())
+		} else {
+			log.Debug("Mining Token, failure", "height", height, "parent-hash", parent.Hash(), "error", err)
+		}
+		if !ok {
+			w.refreshPending(true)
+			return
+		}
 	}
 
 	start := time.Now()
@@ -1642,7 +1644,11 @@ func (w *worker) commitWork(interrupt *int32, noempty bool, timestamp int64) {
 		w.commit(work.copy(), nil, false, start)
 	}
 	// Fill pending transactions from the txpool
-	w.fillTransactions(interrupt, work)
+	err = w.fillTransactions(interrupt, work)
+	if errors.Is(err, errBlockInterruptedByNewHead) {
+		work.discard()
+		return
+	}
 	w.commit(work.copy(), w.fullTaskHook, true, start)
 
 	// Swap out the old work with the new one, terminating any leftover
@@ -1659,7 +1665,7 @@ func (w *worker) commitWork(interrupt *int32, noempty bool, timestamp int64) {
 // Note the assumption is held that the mutation is allowed to the passed env, do
 // the deep copy first.
 func (w *worker) commit(env *environment, interval func(), update bool, start time.Time) error {
-	if !wemixminer.IsPoW() && !wemixminer.IsMiner() {
+	if !wemixminer.IsPoW() && !wemixminer.HasMiningToken() {
 		return errors.New("Not Miner")
 	}
 
@@ -1698,7 +1704,7 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 // In Wemix, uncles are not welcome and difficulty is so low,
 // there's no reason to run miners asynchronously.
 func (w *worker) commitEx(env *environment, interval func(), update bool, start time.Time) error {
-	if !wemixminer.IsPoW() && !wemixminer.IsMiner() {
+	if !wemixminer.IsPoW() && !wemixminer.HasMiningToken() {
 		return errors.New("Not Miner")
 	}
 	if w.isRunning() {
@@ -1758,6 +1764,11 @@ func (w *worker) commitEx(env *environment, interval func(), update bool, start 
 					}
 					logs = append(logs, receipt.Logs...)
 				}
+				if !wemixminer.IsPoW() {
+					if err = wemixminer.ReleaseMiningToken(sealedBlock.Number(), sealedBlock.Hash(), sealedBlock.ParentHash()); err != nil {
+						return err
+					}
+				}
 				// Commit block and state to database.
 				_, err := w.chain.WriteBlockAndSetHead(sealedBlock, receipts, logs, env.state, true)
 				if err != nil {
@@ -1766,10 +1777,6 @@ func (w *worker) commitEx(env *environment, interval func(), update bool, start 
 				}
 				log.Info("Successfully sealed new block", "number", sealedBlock.Number(), "sealhash", sealhash, "hash", hash,
 					"elapsed", common.PrettyDuration(time.Since(createdAt)))
-
-				if !wemixminer.IsPoW() && !wemixminer.IsMiner() {
-					return errors.New("Not Miner")
-				}
 
 				// Broadcast the block and announce chain insertion event
 				w.mux.Post(core.NewMinedBlockEvent{Block: sealedBlock})
@@ -1786,7 +1793,13 @@ func (w *worker) commitEx(env *environment, interval func(), update bool, start 
 }
 
 // getSealingBlock generates the sealing block based on the given parameters.
-func (w *worker) getSealingBlock(parent common.Hash, timestamp uint64, coinbase common.Address, random common.Hash) (*types.Block, error) {
+// The generation result will be passed back via the given channel no matter
+// the generation itself succeeds or not.
+func (w *worker) getSealingBlock(parent common.Hash, timestamp uint64, coinbase common.Address, random common.Hash, noTxs bool) (chan *types.Block, chan error, error) {
+	var (
+		resCh = make(chan *types.Block, 1)
+		errCh = make(chan error, 1)
+	)
 	req := &getWorkReq{
 		params: &generateParams{
 			timestamp:  timestamp,
@@ -1796,18 +1809,16 @@ func (w *worker) getSealingBlock(parent common.Hash, timestamp uint64, coinbase 
 			random:     random,
 			noUncle:    true,
 			noExtra:    true,
+			noTxs:      noTxs,
 		},
-		result: make(chan *types.Block, 1),
+		result: resCh,
+		err:    errCh,
 	}
 	select {
 	case w.getWorkCh <- req:
-		block := <-req.result
-		if block == nil {
-			return nil, req.err
-		}
-		return block, nil
+		return resCh, errCh, nil
 	case <-w.exitCh:
-		return nil, errors.New("miner closed")
+		return nil, nil, errors.New("miner closed")
 	}
 }
 

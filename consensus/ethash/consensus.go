@@ -321,7 +321,7 @@ func (ethash *Ethash) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 		return err
 	}
 	// Wemix: Check if it's generated and signed by a registered node
-	if !wemixminer.IsPoW() && !wemixminer.VerifyBlockSig(header.Number, header.MinerNodeId, header.Root, header.MinerNodeSig) {
+	if !wemixminer.IsPoW() && !wemixminer.VerifyBlockSig(header.Number, header.Coinbase, header.MinerNodeId, header.Root, header.MinerNodeSig, chain.Config().IsPangyo(header.Number)) {
 		return consensus.ErrUnauthorized
 	}
 	return nil
@@ -517,8 +517,8 @@ func calcDifficultyFrontier(time uint64, parent *types.Header) *big.Int {
 }
 
 // Exported for fuzzing
-var FrontierDifficultyCalulator = calcDifficultyFrontier
-var HomesteadDifficultyCalulator = calcDifficultyHomestead
+var FrontierDifficultyCalculator = calcDifficultyFrontier
+var HomesteadDifficultyCalculator = calcDifficultyHomestead
 var DynamicDifficultyCalculator = makeDifficultyCalculator
 
 // verifySeal checks whether a block satisfies the PoW difficulty requirements,
@@ -623,11 +623,11 @@ func (ethash *Ethash) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 
 	// sign header.Root with node's private key
 	if !wemixminer.IsPoW() {
-		nodeId, sig, err := wemixminer.SignBlock(header.Root)
+		coinbase, sig, err := wemixminer.SignBlock(header.Number, header.Root)
 		if err != nil {
 			return nil, err
 		} else {
-			header.MinerNodeId = nodeId
+			header.Coinbase = coinbase
 			header.MinerNodeSig = sig
 		}
 	}

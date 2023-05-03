@@ -26,6 +26,8 @@
         "constantinopleBlock": 0,
         "istanbulBlock": 0,
         "londonBlock": 0,
-        "muirGlacierBlock": 0
+        "muirGlacierBlock": 0,
+        "pangyoBlock": 0,
+        "applepieBlock": 0
     }
 }

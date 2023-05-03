@@ -96,6 +96,9 @@ ios:
 test: all
 	$(GORUN) build/ci.go test
 
+test-short: all
+	$(GORUN) build/ci.go test -short
+
 lint: wemix/governance_abi.go ## Run linters.
 	$(GORUN) build/ci.go lint
 
@@ -113,7 +116,6 @@ clean:
 
 devtools:
 	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
-	env GOBIN= go install github.com/kevinburke/go-bindata/go-bindata@latest
 	env GOBIN= go install github.com/fjl/gencodec@latest
 	env GOBIN= go install github.com/golang/protobuf/protoc-gen-go@latest
 	env GOBIN= go install ./cmd/abigen
@@ -138,7 +140,7 @@ rocksdb:
 else
 rocksdb:
 	@[ ! -e rocksdb/.git ] && git submodule update --init rocksdb;	\
-	cd $(ROCKSDB_DIR) && make -j8 static_lib;
+	cd $(ROCKSDB_DIR) && PORTABLE=1 make -j8 static_lib;
 endif
 
 AWK_CODE='								\
@@ -167,7 +169,7 @@ BEGIN { print "package wemix\n"; }					     \
   n = "Registry";							     \
   print "var " n "Abi = `{ \"contractName\": \"" n "\", \"abi\": " $$0 "}`"; \
 }									     \
-/^var Staking_contract/ {						     \
+/^var StakingImp_contract/ {						     \
   sub("^var[^(]*\\(","",$$0); sub("\\);$$","",$$0);			     \
   n = "Staking";							     \
   print "var " n "Abi = `{ \"contractName\": \"" n "\", \"abi\": " $$0 "}`"; \
