@@ -30,7 +30,8 @@ type govdataLegacy struct {
 }
 
 var (
-	syncLock = &sync.Mutex{}
+	syncLock       = &sync.Mutex{}
+	testnetBlock17 = big.NewInt(17)
 )
 
 func (ma *metaAdmin) getGovDataLegacy() (data *govdataLegacy, err error) {
@@ -138,25 +139,12 @@ func (ma *metaAdmin) getRewardAccountsLegacy(ctx context.Context, block *big.Int
 		input []interface{}
 	)
 
-	if ma.registry == nil || ma.registry.To == nil {
+	reg, gov, _, staking, legacy, err := ma.getRegGovEnvContracts(ctx, block)
+	if !legacy {
 		err = metaminer.ErrNotInitialized
+	}
+	if err != nil {
 		return
-	}
-
-	reg := &metclient.RemoteContract{
-		Cli: ma.cli,
-		Abi: registryLegacyContract.Abi,
-		To:  ma.registry.To,
-	}
-	gov := &metclient.RemoteContract{
-		Cli: ma.cli,
-		Abi: govLegacyContract.Abi,
-		To:  ma.gov.To,
-	}
-	staking := &metclient.RemoteContract{
-		Cli: ma.cli,
-		Abi: stakingLegacyContract.Abi,
-		To:  ma.staking.To,
 	}
 
 	input = []interface{}{metclient.ToBytes32("RewardPool")}
@@ -200,6 +188,16 @@ func (ma *metaAdmin) getRewardAccountsLegacy(ctx context.Context, block *big.Int
 			Reward: addr,
 			Stake:  stake,
 		})
+	}
+
+	if rewardPoolAccount == nil && maintenanceAccount != nil && len(members) == 0 && block.Cmp(testnetBlock17) == 0 {
+		if genesis, err2 := ma.cli.HeaderByNumber(ctx, common.Big0); err2 != nil {
+			err = err2
+			return
+		} else if bytes.Equal(genesis.Hash().Bytes(), params.MetadiumTestnetGenesisHash.Bytes()) {
+			err = metaminer.ErrNotInitialized
+			return
+		}
 	}
 
 	return
