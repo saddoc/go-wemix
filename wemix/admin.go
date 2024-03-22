@@ -1826,6 +1826,7 @@ func init() {
 	wemixminer.AcquireMiningTokenFunc = acquireMiningToken
 	wemixminer.ReleaseMiningTokenFunc = releaseMiningToken
 	wemixminer.HasMiningTokenFunc = hasMiningToken
+	wemixminer.GetFinalizedBlockNumberFunc = getFinalizedBlockNumber
 	wemixapi.Info = Info
 	wemixapi.GetMiners = getMiners
 	wemixapi.GetMinerStatus = getMinerStatus

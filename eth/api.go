@@ -42,6 +42,7 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	wemixapi "github.com/ethereum/go-ethereum/wemix/api"
+	wemixminer "github.com/ethereum/go-ethereum/wemix/miner"
 )
 
 // PublicEthereumAPI provides an API to access Ethereum full node-related
@@ -353,7 +354,8 @@ func (api *PublicDebugAPI) DumpBlock(blockNr rpc.BlockNumber) (state.Dump, error
 	if blockNr == rpc.LatestBlockNumber {
 		block = api.eth.blockchain.CurrentBlock()
 	} else if blockNr == rpc.FinalizedBlockNumber {
-		block = api.eth.blockchain.CurrentBlock()
+		finalizedBlockNumber, _ := wemixminer.GetFinalizedBlockNumber(api.eth.blockchain.CurrentHeader().Number)
+		block = api.eth.blockchain.GetBlockByNumber(finalizedBlockNumber.Uint64())
 	} else {
 		block = api.eth.blockchain.GetBlockByNumber(uint64(blockNr))
 	}
@@ -443,7 +445,8 @@ func (api *PublicDebugAPI) AccountRange(blockNrOrHash rpc.BlockNumberOrHash, sta
 			if number == rpc.LatestBlockNumber {
 				block = api.eth.blockchain.CurrentBlock()
 			} else if number == rpc.FinalizedBlockNumber {
-				block = api.eth.blockchain.CurrentBlock()
+				finalizedBlockNumber, _ := wemixminer.GetFinalizedBlockNumber(api.eth.blockchain.CurrentHeader().Number)
+				block = api.eth.blockchain.GetBlockByNumber(finalizedBlockNumber.Uint64())
 			} else {
 				block = api.eth.blockchain.GetBlockByNumber(uint64(number))
 			}

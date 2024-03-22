@@ -28,6 +28,7 @@ var (
 	AcquireMiningTokenFunc      func(height *big.Int, parentHash common.Hash) (bool, error)
 	ReleaseMiningTokenFunc      func(height *big.Int, hash, parentHash common.Hash) error
 	HasMiningTokenFunc          func() bool
+	GetFinalizedBlockNumberFunc func(height *big.Int) (*big.Int, error)
 )
 
 func IsPartner(id string) bool {
@@ -151,6 +152,14 @@ func GetBlockBuildParameters(height *big.Int) (blockInterval int64, maxBaseFee, 
 		return 15, big.NewInt(0), big.NewInt(0), 0, 100, ErrNotInitialized
 	} else {
 		return GetBlockBuildParametersFunc(height)
+	}
+}
+
+func GetFinalizedBlockNumber(height *big.Int) (*big.Int, error) {
+	if GetFinalizedBlockNumberFunc == nil {
+		return nil, ErrNotInitialized
+	} else {
+		return GetFinalizedBlockNumberFunc(height)
 	}
 }
 

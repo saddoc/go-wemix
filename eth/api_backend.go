@@ -39,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	wemixminer "github.com/ethereum/go-ethereum/wemix/miner"
 )
 
 // EthAPIBackend implements ethapi.Backend for full nodes
@@ -76,7 +77,8 @@ func (b *EthAPIBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumb
 		return b.eth.blockchain.CurrentBlock().Header(), nil
 	}
 	if number == rpc.FinalizedBlockNumber {
-		return b.eth.blockchain.CurrentBlock().Header(), nil
+		finalizedBlockNumber, _ := wemixminer.GetFinalizedBlockNumber(b.eth.blockchain.CurrentHeader().Number)
+		return b.eth.blockchain.GetHeaderByNumber(finalizedBlockNumber.Uint64()), nil
 	}
 	return b.eth.blockchain.GetHeaderByNumber(uint64(number)), nil
 }
@@ -113,7 +115,8 @@ func (b *EthAPIBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumbe
 		return b.eth.blockchain.CurrentBlock(), nil
 	}
 	if number == rpc.FinalizedBlockNumber {
-		return b.eth.blockchain.CurrentBlock(), nil
+		finalizedBlockNumber, _ := wemixminer.GetFinalizedBlockNumber(b.eth.blockchain.CurrentHeader().Number)
+		return b.eth.blockchain.GetBlockByNumber(finalizedBlockNumber.Uint64()), nil
 	}
 	return b.eth.blockchain.GetBlockByNumber(uint64(number)), nil
 }

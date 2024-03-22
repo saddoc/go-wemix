@@ -352,6 +352,49 @@ func (ma *wemixAdmin) electNextMiner(height *big.Int) error {
 	return nil
 }
 
+func getFinalizedBlockNumber(height *big.Int) (*big.Int, error) {
+	prev := new(big.Int).Sub(height, common.Big1)
+	if admin == nil {
+		return prev, wemixminer.ErrNotInitialized
+	}
+	var (
+		ctx context.Context
+		gov *metclient.RemoteContract
+		err error
+	)
+	ctx = context.Background()
+	if _, gov, _, _, err = admin.getRegGovEnvContracts(ctx, prev); err != nil {
+		return prev, wemixminer.ErrNotInitialized
+	}
+	e, err := getCoinbaseEnodeCache(ctx, prev, gov)
+	if err != nil {
+		return prev, err
+	}
+	// if count <= 2, not enforced
+	if len(e.nodes) <= 2 {
+		return prev, nil
+	}
+	finality := len(e.nodes) / 2
+
+	// max finality is
+	// (removed_node_count)*2 + (added_node_count) +
+	// min(floor(previous_node_count/2) - removed_node_count,
+	//     floor(new_node_count/2) - added_node_count)
+	// Because only one node can added, removed or replaced, the max for now is
+	// => floor(node_count/2) + 2
+	if finality > int(height.Int64()-e.modifiedBlock.Int64()) {
+		finality += int(height.Int64() - e.modifiedBlock.Int64())
+	}
+	finality += 1
+
+	finalizedBlockNumber := new(big.Int).Set(height)
+	finalizedBlockNumber.Sub(finalizedBlockNumber, big.NewInt(int64(finality)))
+	if finalizedBlockNumber.Cmp(big0) < 0 {
+		finalizedBlockNumber = big0
+	}
+	return finalizedBlockNumber, nil
+}
+
 func refreshCoinbaseEnodeCache(height *big.Int) {
 	_, _ = admin.nextMinerCandidates(height)
 }
