@@ -303,3 +303,8 @@ func (*HandlerT) EtcdGet(key string) (string, error) {
 func (*HandlerT) EtcdDelete(key string) error {
 	return wemixapi.EtcdDelete(key)
 }
+
+// Check the finalized block
+func (*HandlerT) GetFinalizedBlockNumber(block *big.Int) (interface{}, error) {
+	return wemixminer.GetFinalizedBlockNumber(block)
+}
