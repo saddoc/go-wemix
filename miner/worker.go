@@ -1599,7 +1599,7 @@ func (w *worker) commitWork(interrupt *int32, noempty bool, timestamp int64) {
 	if !wemixminer.IsPoW() {
 		parent := w.chain.CurrentBlock()
 		height := new(big.Int).Add(parent.Number(), common.Big1)
-		ok, err := wemixminer.AcquireMiningToken(height, parent.Hash())
+		ok, err := wemixminer.AcquireMiningToken(height, parent.Hash(), false)
 		if ok {
 			log.Debug("Mining Token, successful", "height", height, "parent-hash", parent.Hash())
 		} else {

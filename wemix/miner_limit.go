@@ -7,13 +7,10 @@ import (
 	"context"
 	"encoding/hex"
 	"math/big"
-	"sort"
-	"time"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/log"
 	wemixapi "github.com/ethereum/go-ethereum/wemix/api"
 	"github.com/ethereum/go-ethereum/wemix/metclient"
 	wemixminer "github.com/ethereum/go-ethereum/wemix/miner"
@@ -163,7 +160,7 @@ func getBlockMiner(ctx context.Context, cli *ethclient.Client, entry *coinbaseEn
 // It's reset when governance gets updated, i.e. search doesn't go back
 // beyond modifiedBlock + 1.
 // Not enforced if member count <= 2.
-func (ma *wemixAdmin) verifyMinerLimit(ctx context.Context, height *big.Int, gov *metclient.RemoteContract, coinbase *common.Address, enode []byte) (bool, error) {
+func (ma *wemixAdmin) verifyMinerLimit(ctx context.Context, height *big.Int, gov *metclient.RemoteContract, coinbase *common.Address, enode []byte, stricterMinerLimitCheck bool) (bool, error) {
 	// parent block number
 	prev := new(big.Int).Sub(height, common.Big1)
 	e, err := getCoinbaseEnodeCache(ctx, prev, gov)
@@ -185,7 +182,7 @@ func (ma *wemixAdmin) verifyMinerLimit(ctx context.Context, height *big.Int, gov
 	var miners [][]byte
 	// the enode should not appear within the last (member count / 2) blocks
 	limit := len(e.nodes) / 2
-	if limit > int(height.Int64()-e.modifiedBlock.Int64()-1) {
+	if !stricterMinerLimitCheck && limit > int(height.Int64()-e.modifiedBlock.Int64()-1) {
 		limit = int(height.Int64() - e.modifiedBlock.Int64() - 1)
 	}
 	for h := new(big.Int).Set(prev); limit > 0; h, limit = h.Sub(h, common.Big1), limit-1 {
@@ -202,7 +199,7 @@ func (ma *wemixAdmin) verifyMinerLimit(ctx context.Context, height *big.Int, gov
 }
 
 // check if self is eligible to mine height block at height-1
-func (ma *wemixAdmin) isEligibleMiner(height *big.Int) (bool, error) {
+func (ma *wemixAdmin) isEligibleMiner(height *big.Int, stricterMinerLimitCheck bool) (bool, error) {
 	var (
 		ctx   context.Context
 		enode []byte
@@ -228,7 +225,7 @@ func (ma *wemixAdmin) isEligibleMiner(height *big.Int) (bool, error) {
 	}
 	// the enode should not appear within the last (member count / 2) blocks
 	limit := len(e.nodes) / 2
-	if limit > int(height.Int64()-e.modifiedBlock.Int64()-1) {
+	if !stricterMinerLimitCheck && limit > int(height.Int64()-e.modifiedBlock.Int64()-1) {
 		limit = int(height.Int64() - e.modifiedBlock.Int64() - 1)
 	}
 	for h := new(big.Int).Set(prev); limit > 0; h, limit = h.Sub(h, common.Big1), limit-1 {
@@ -241,115 +238,6 @@ func (ma *wemixAdmin) isEligibleMiner(height *big.Int) (bool, error) {
 		}
 	}
 	return true, nil
-}
-
-// It's reset when governance gets updated, i.e. search doesn't go back
-// beyond modifiedBlock + 1.
-// Not enforced if member count <= 2.
-func (ma *wemixAdmin) nextMinerCandidates(height *big.Int) ([]*wemixNode, error) {
-	var (
-		ctx context.Context
-		gov *metclient.RemoteContract
-		err error
-	)
-	ctx = context.Background()
-	if _, gov, _, _, err = ma.getRegGovEnvContracts(ctx, height); err != nil {
-		return nil, wemixminer.ErrNotInitialized
-	}
-	e, err := getCoinbaseEnodeCache(ctx, height, gov)
-	if err != nil {
-		return nil, err
-	}
-	m := map[string]float64{}
-	dix := (int(height.Int64()) + 1) % len(e.nodes) // default miner = height % member count
-	for i, n := range e.nodes {
-		if i < dix {
-			i += len(e.nodes)
-		}
-		// score, the closer to the default miner, the lower the score
-		m[n.Enode] = float64(len(e.nodes)-(i-dix)) / float64(2*len(e.nodes))
-	}
-	limit := len(e.nodes) / 2
-	if len(e.nodes) <= 2 {
-		limit = 0
-	} else if limit > int(height.Int64()-e.modifiedBlock.Int64()-1) {
-		limit = int(height.Int64() - e.modifiedBlock.Int64() - 1)
-	}
-	tooBig := float64(1000000000.0)
-	for ix, h := 0, new(big.Int).Set(height); ix < len(e.nodes); h, ix = h.Sub(h, common.Big1), ix+1 {
-		blockMinerEnode, err := getBlockMiner(ctx, admin.cli, e, h)
-		if err != nil {
-			continue
-		}
-		senode := string(blockMinerEnode)
-		score := 1.0
-		if ix < limit {
-			score = tooBig
-		}
-		m[senode] += score
-	}
-
-	var keys []string
-	for k, v := range m {
-		if v <= tooBig {
-			keys = append(keys, k)
-		}
-	}
-	sort.SliceStable(keys, func(i, j int) bool {
-		return m[keys[i]] < m[keys[j]]
-	})
-	var miners []*wemixNode
-	for _, k := range keys {
-		if nix, ok := e.enode2index[k]; !ok || nix <= 0 {
-			continue
-		} else {
-			miners = append(miners, e.nodes[nix-1])
-		}
-	}
-	return miners, nil
-}
-
-// elect the most eligible candidate as the next leader
-func (ma *wemixAdmin) electNextMiner(height *big.Int) error {
-	tstart := time.Now()
-	enode, err := hex.DecodeString(ma.self.Enode)
-	if err != nil {
-		return wemixminer.ErrNotInitialized
-	}
-	candidates, err := ma.nextMinerCandidates(height)
-	if err != nil {
-		return err
-	}
-	// miningPeers map
-	peers := ma.collectMinerStates(height)
-	closeEnough := int64(2)
-	peersMap := map[string]*wemixapi.WemixMinerStatus{}
-	if len(peers) > 0 {
-		for _, p := range peers {
-			if p.Status == "up" && height.Int64()-p.LatestBlockHeight.Int64() <= closeEnough {
-				peersMap[p.NodeName] = p
-			}
-		}
-	}
-
-	for _, next := range candidates {
-		if bytes.Equal(enode, []byte(next.Enode)) {
-			return nil
-		}
-		if len(peers) > 0 {
-			if _, ok := peersMap[next.Name]; !ok {
-				continue
-			}
-		} else if !admin.isPeerUp(next.Id) {
-			continue
-		}
-		if err = admin.etcdMoveLeader(next.Name); err == nil {
-			log.Debug("new miner elected", "leader", next.Name, "height", height.Uint64()+1, "took", time.Since(tstart))
-			return nil
-		}
-	}
-	log.Error("failed to elect a new miner", "height", height.Uint64()+1, "took", time.Since(tstart))
-	return nil
 }
 
 func getFinalizedBlockNumber(height *big.Int) (*big.Int, error) {
@@ -396,7 +284,16 @@ func getFinalizedBlockNumber(height *big.Int) (*big.Int, error) {
 }
 
 func refreshCoinbaseEnodeCache(height *big.Int) {
-	_, _ = admin.nextMinerCandidates(height)
+	var (
+		ctx context.Context
+		gov *metclient.RemoteContract
+		err error
+	)
+	ctx = context.Background()
+	if _, gov, _, _, err = admin.getRegGovEnvContracts(ctx, height); err != nil {
+		return
+	}
+	_, _ = getCoinbaseEnodeCache(ctx, height, gov)
 }
 
 // EOF

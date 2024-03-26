@@ -934,11 +934,11 @@ func (ma *wemixAdmin) ttl2(ctx context.Context, key string) (int64, error) {
 // work is expected to be there
 //
 //	if not present, put an empty string & try again
-func (ma *wemixAdmin) acquireTokenSync(ctx context.Context, height *big.Int, parentHash common.Hash, ttl int64) (*WemixToken, error) {
+func (ma *wemixAdmin) acquireTokenSync(ctx context.Context, height *big.Int, parentHash common.Hash, ttl int64, stricterMinerLimitCheck bool) (*WemixToken, error) {
 	if !ma.etcdIsReady() {
 		return nil, wemixminer.ErrNotInitialized
 	}
-	if ok, err := ma.isEligibleMiner(height); err != nil {
+	if ok, err := ma.isEligibleMiner(height, stricterMinerLimitCheck); err != nil {
 		return nil, err
 	} else if !ok {
 		return nil, ErrIneligible

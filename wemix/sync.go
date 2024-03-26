@@ -141,7 +141,7 @@ func loadMiningToken() *WemixToken {
 }
 
 // acquires mining token via etcd, iff (the token doesn't exist or got expired) and (the work matches or doesn't exist).
-func acquireMiningToken(height *big.Int, parentHash common.Hash) (bool, error) {
+func acquireMiningToken(height *big.Int, parentHash common.Hash, stricterMinerLimitCheck bool) (bool, error) {
 	if isBootNodeBeforeGenesis() {
 		return true, nil
 	}
@@ -151,7 +151,7 @@ func acquireMiningToken(height *big.Int, parentHash common.Hash) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(),
 		admin.etcd.Server.Cfg.ReqTimeout())
 	defer cancel()
-	lck, err := admin.acquireTokenSync(ctx, height, parentHash, MiningTokenTTL)
+	lck, err := admin.acquireTokenSync(ctx, height, parentHash, MiningTokenTTL, stricterMinerLimitCheck)
 	if err != nil {
 		return false, err
 	}
