@@ -374,19 +374,9 @@ func getFinalizedBlockNumber(height *big.Int) (*big.Int, error) {
 	if len(e.nodes) <= 2 {
 		return prev, nil
 	}
-	finality := len(e.nodes) / 2
-
-	// max finality is
-	// (removed_node_count)*2 + (added_node_count) +
-	// min(floor(previous_node_count/2) - removed_node_count,
-	//     floor(new_node_count/2) - added_node_count)
-	// Because only one node can added, removed or replaced, the max for now is
-	// => floor(node_count/2) + 2
-	if finality > int(height.Int64()-e.modifiedBlock.Int64()) {
-		finality += int(height.Int64() - e.modifiedBlock.Int64())
-	}
-	finality += 1
-
+	// with the max compromised node count to be less than n / 2,
+	// max finality is n / 2 + 1
+	finality := len(e.nodes)/2 + 1
 	finalizedBlockNumber := new(big.Int).Set(height)
 	finalizedBlockNumber.Sub(finalizedBlockNumber, big.NewInt(int64(finality)))
 	if finalizedBlockNumber.Cmp(big0) < 0 {
