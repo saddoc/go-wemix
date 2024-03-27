@@ -1836,10 +1836,8 @@ func init() {
 	wemixapi.EtcdJoin = EtcdJoin
 	wemixapi.EtcdMoveLeader = EtcdMoveLeader
 	wemixapi.EtcdGetWork = EtcdGetWork
-	wemixapi.EtcdDeleteWork = EtcdDeleteWork
 	wemixapi.EtcdGet = EtcdGet
 	wemixapi.EtcdPut = EtcdPut
-	wemixapi.EtcdDelete = EtcdDelete
 
 	// handle testnet block 94 rewards
 	if err := json.Unmarshal([]byte(testnetBlock94RewardsString), &testnetBlock94Rewards); err != nil {

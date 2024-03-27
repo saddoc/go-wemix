@@ -244,11 +244,6 @@ web3._extend({
 			call: 'admin_etcdGetWork',
 			params: 0
 		}),
-		new web3._extend.Method({
-			name: 'etcdDeleteWork',
-			call: 'admin_etcdDeleteWork',
-			params: 0
-		}),
 	],
 	properties: [
 		new web3._extend.Property({
@@ -553,11 +548,6 @@ web3._extend({
 			name: 'etcdPut',
 			call: 'debug_etcdPut',
 			params: 2,
-		}),
-		new web3._extend.Method({
-			name: 'etcdDelete',
-			call: 'debug_etcdDelete',
-			params: 1,
 		}),
 		new web3._extend.Method({
 			name: 'dbGet',

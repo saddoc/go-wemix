@@ -647,17 +647,6 @@ func (ma *wemixAdmin) etcdPut2(key, value, prev string) error {
 	return err
 }
 
-func (ma *wemixAdmin) etcdDelete(key string) error {
-	if !ma.etcdIsReady() {
-		return ErrNotRunning
-	}
-	ctx, cancel := context.WithTimeout(context.Background(),
-		ma.etcd.Server.Cfg.ReqTimeout())
-	defer cancel()
-	_, err := ma.etcdCli.Delete(ctx, key)
-	return err
-}
-
 // handles removed nodes
 // caller should take care of etcd & governance lock
 func etcdSyncMembership() error {
@@ -764,17 +753,16 @@ again:
 		if tokenFound {
 			if len(foundToken) > 0 {
 				var otherToken = &WemixToken{}
-				if err = json.Unmarshal(foundToken, otherToken); err != nil {
-					return nil, err
-				}
-				otherToken.admin = ma
-				if otherToken.Till >= time.Now().Unix() {
-					// valid lock
-					return otherToken, ErrExists
+				if err = json.Unmarshal(foundToken, otherToken); err == nil {
+					otherToken.admin = ma
+					if otherToken.Till >= time.Now().Unix() {
+						// valid lock
+						return otherToken, ErrExists
+					}
 				}
 			}
 
-			// expired or empty lock, delete it & try again
+			// expired, empty or invalid lock, delete it & try again
 			tx = ma.etcdCli.Txn(ctx)
 			_, err := tx.If(
 				clientv3.Compare(clientv3.Value(wemixTokenKey), "=", string(foundToken)),
@@ -1275,13 +1263,6 @@ func EtcdGetWork() (string, error) {
 	return admin.etcdGet(wemixWorkKey)
 }
 
-func EtcdDeleteWork() error {
-	if admin == nil {
-		return ErrNotRunning
-	}
-	return admin.etcdDelete(wemixWorkKey)
-}
-
 func EtcdPut(key, value string) error {
 	if admin == nil {
 		return ErrNotRunning
@@ -1295,13 +1276,6 @@ func EtcdGet(key string) (string, error) {
 		return "", ErrNotRunning
 	}
 	return admin.etcdGet(key)
-}
-
-func EtcdDelete(key string) error {
-	if admin == nil {
-		return ErrNotRunning
-	}
-	return admin.etcdDelete(key)
 }
 
 /* EOF */

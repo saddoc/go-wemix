@@ -315,11 +315,6 @@ func (api *PrivateAdminAPI) EtcdGetWork() (string, error) {
 	return wemixapi.EtcdGetWork()
 }
 
-// Remove the latest logged work
-func (api *PrivateAdminAPI) EtcdDeleteWork() error {
-	return wemixapi.EtcdDeleteWork()
-}
-
 // Synchronize with the given peer
 func (api *PrivateAdminAPI) SynchroniseWith(id enode.ID) error {
 	return api.eth.handler.SynchroniseWith(id)

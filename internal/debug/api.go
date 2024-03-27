@@ -299,11 +299,6 @@ func (*HandlerT) EtcdGet(key string) (string, error) {
 	return wemixapi.EtcdGet(key)
 }
 
-// Remove an etcd key / value pair
-func (*HandlerT) EtcdDelete(key string) error {
-	return wemixapi.EtcdDelete(key)
-}
-
 // Check the finalized block
 func (*HandlerT) GetFinalizedBlockNumber(block *big.Int) (interface{}, error) {
 	return wemixminer.GetFinalizedBlockNumber(block)
