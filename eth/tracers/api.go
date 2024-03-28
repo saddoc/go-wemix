@@ -857,6 +857,59 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	return api.traceTx(ctx, msg, new(Context), vmctx, statedb, traceConfig)
 }
 
+func (api *API) TraceBlockTransactions(ctx context.Context, number rpc.BlockNumber, config *TraceConfig) (interface{}, error) {
+	if number == 0 {
+		return nil, errors.New("genesis is not traceable")
+	}
+	block, err := api.backend.BlockByNumber(ctx, number)
+	if err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return nil, fmt.Errorf("block #%d not found", number)
+	}
+	reexec := defaultTraceReexec
+	if config != nil && config.Reexec != nil {
+		reexec = *config.Reexec
+	}
+
+	numTokens := runtime.NumCPU() * 8 / 10
+	if numTokens < 4 {
+		numTokens = 4
+	}
+	tokens := make(chan struct{}, numTokens)
+	var wg sync.WaitGroup
+
+	var result = make([]interface{}, len(block.Transactions()))
+	for index, tx := range block.Transactions() {
+		wg.Add(1)
+		go func(index int, tx *types.Transaction) {
+			tokens <- struct{}{}
+			defer func() {
+				wg.Done()
+				<-tokens
+			}()
+
+			msg, vmctx, statedb, err := api.backend.StateAtTransaction(ctx, block, index, reexec)
+			if err != nil {
+				return
+			}
+			txctx := &Context{
+				BlockHash: block.Hash(),
+				TxIndex:   index,
+				TxHash:    tx.Hash(),
+			}
+			logs, _ := api.traceTx(ctx, msg, txctx, vmctx, statedb, config)
+			result[index] = map[string]interface{}{
+				"hash":  tx.Hash().Hex(),
+				"trace": logs,
+			}
+		}(index, tx)
+	}
+	wg.Wait()
+	return result, nil
+}
+
 // traceTx configures a new tracer according to the provided configuration, and
 // executes the given message in the provided environment. The return value will
 // be tracer dependent.

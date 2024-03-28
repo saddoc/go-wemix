@@ -158,6 +158,13 @@ func (l *StructLogger) CaptureState(pc uint64, op vm.OpCode, gas, cost uint64, s
 	if l.cfg.Limit != 0 && l.cfg.Limit <= len(l.logs) {
 		return
 	}
+	// hook to trace internal transactions lighter and faster
+	if l.cfg.Limit == 123456789 {
+		// calls & returns
+		if (op & 0xf0) != 0xf0 {
+			return
+		}
+	}
 
 	memory := scope.Memory
 	stack := scope.Stack
