@@ -397,7 +397,7 @@ func SendContract(ctx context.Context, contract *RemoteContract, method string,
 	return
 }
 
-func SendValue(ctx context.Context, cli *ethclient.Client, from *keystore.Key, to common.Address, amount *big.Int, gas int, dynamicFee bool) (hash common.Hash, err error) {
+func SendTransaction(ctx context.Context, cli *ethclient.Client, from *keystore.Key, to *common.Address, value *big.Int, data []byte, gas int, dynamicFee bool) (hash common.Hash, err error) {
 	chainId, maxTip, baseFee, gasPrice, nonce, tenthMultiple, err := GetOpportunisticTxParams(
 		ctx, cli, from.Address, false, true, dynamicFee)
 	if err != nil {
@@ -406,7 +406,7 @@ func SendValue(ctx context.Context, cli *ethclient.Client, from *keystore.Key, t
 
 	var tx, stx *types.Transaction
 	if !dynamicFee {
-		tx = types.NewTransaction(nonce.Uint64(), to, amount, uint64(gas), gasPrice, nil)
+		tx = types.NewTransaction(nonce.Uint64(), *to, value, uint64(gas), gasPrice, data)
 	} else {
 		if tenthMultiple < 10 {
 			tenthMultiple = 10
@@ -423,8 +423,9 @@ func SendValue(ctx context.Context, cli *ethclient.Client, from *keystore.Key, t
 			GasTipCap: maxTip,
 			GasFeeCap: maxFeePerGas,
 			Gas:       uint64(gas),
-			To:        &to,
-			Value:     amount,
+			To:        to,
+			Value:     value,
+			Data:      data,
 		})
 	}
 
